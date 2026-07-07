@@ -89,7 +89,7 @@ fun TransportScreen(viewModel: TransportViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            text = "NAM Looper",
+            text = "DNicheLooper",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
@@ -101,6 +101,12 @@ fun TransportScreen(viewModel: TransportViewModel) {
             ActivityResultContracts.OpenDocument(),
         ) { uri ->
             uri?.let { viewModel.loadNamModel(pickSlot, it) }
+        }
+
+        val pickIr = rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument(),
+        ) { uri ->
+            uri?.let { viewModel.loadIr(it) }
         }
 
         AmpCard(
@@ -115,6 +121,8 @@ fun TransportScreen(viewModel: TransportViewModel) {
             onLoadPreset = viewModel::loadNamPreset,
             onDeletePreset = viewModel::deleteNamPreset,
             onRefreshPresets = viewModel::refreshNamPresets,
+            onLoadIr = { pickIr.launch(arrayOf("audio/*", "*/*")) },
+            onClearIr = viewModel::clearIr,
         )
 
         LoopIndicator(state = state)
@@ -377,6 +385,8 @@ private fun AmpCard(
     onLoadPreset: (String) -> Unit,
     onDeletePreset: (String) -> Unit,
     onRefreshPresets: () -> Unit,
+    onLoadIr: () -> Unit,
+    onClearIr: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -389,7 +399,7 @@ private fun AmpCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "NAM Amp",
+                    "Amp & Cab",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
@@ -444,6 +454,61 @@ private fun AmpCard(
                         contentPadding = PaddingValues(horizontal = 8.dp),
                     ) { Text("✕") }
                 }
+            }
+
+            HorizontalDivider()
+
+            // Slot D: fixed cabinet IR (global, post-amp). NOT part of the
+            // A/B/C switching — the amp changes, the cab stays. No filter chip.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "D",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.width(24.dp),
+                )
+                Text(
+                    text = state.irFileName?.removeSuffix(".wav")
+                        ?.removeSuffix(".WAV") ?: "— bypass —",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.irFileName == null) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(enabled = !state.irBusy) { onLoadIr() },
+                )
+                TextButton(
+                    onClick = onLoadIr,
+                    enabled = !state.irBusy,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) { Text(if (state.irBusy) "…" else "LOAD") }
+                TextButton(
+                    onClick = onClearIr,
+                    enabled = state.irFileName != null && !state.irBusy,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) { Text("✕") }
+            }
+
+            state.irMessage?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (message.contains("failed") || message.contains("missing")) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        PlayGreen
+                    },
+                )
             }
 
             state.namMessage?.let { message ->

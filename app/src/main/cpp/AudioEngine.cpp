@@ -9,7 +9,7 @@
 
 #include "NAM/get_dsp.h"
 
-#define LOG_TAG "NAMLooper"
+#define LOG_TAG "DNicheLooper"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -120,6 +120,7 @@ bool AudioEngine::start(int32_t inputDeviceId, int32_t outputDeviceId) {
     // No callback runs yet: adopt pending NAM models and size them for the
     // new stream (Reset prewarns, which is why this happens before start).
     mNamChain.prepare(mSampleRate, mMaxBlockFrames);
+    mIrProcessor.prepare();
 
     mDrainCallbacks.store(kDrainCallbackCount, std::memory_order_relaxed);
 
@@ -235,6 +236,9 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* /*stream*/
     // Amp sim in front of the looper: the loop records the amp sound, and
     // the live monitor plays it too (empty slot = dry pass-through).
     mNamChain.process(mMonoIn.data(), mMonoFx.data(), numFrames);
+    // Slot D: fixed cabinet IR, post-amp and pre-FX-metering (so the FX
+    // meter reads post-IR). Processes the block in place; bypass when empty.
+    mIrProcessor.process(mMonoFx.data(), numFrames);
     float fxPeak = 0.0f;
     for (int32_t i = 0; i < numFrames; ++i) {
         const float magnitude = mMonoFx[i] < 0.0f ? -mMonoFx[i] : mMonoFx[i];

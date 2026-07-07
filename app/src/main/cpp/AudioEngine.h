@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "IrProcessor.h"
 #include "LooperEngine.h"
 #include "NamChain.h"
 
@@ -94,7 +95,17 @@ public:
 
     // App thread, called from the UI poll: frees models the audio thread
     // retired after a slot swap.
-    void namMaintenance() { mNamChain.collectGarbage(); }
+    void namMaintenance() {
+        mNamChain.collectGarbage();
+        mIrProcessor.collectGarbage();
+    }
+
+    // App thread: loads an engine-rate mono IR (Slot D, global/fixed).
+    // [coeffs, coeffs+numTaps) is copied, truncated to IrProcessor::kMaxTaps
+    // and energy-normalized. numTaps<=0 clears the slot (bypass).
+    void irLoad(const float* coeffs, int32_t numTaps) { mIrProcessor.publish(coeffs, numTaps); }
+
+    void irClear() { mIrProcessor.publish(nullptr, 0); }
 
     void setMonitorEnabled(bool enabled) { mMonitorEnabled.store(enabled, std::memory_order_relaxed); }
     void setInputGain(float gain) { mInputGain.store(gain, std::memory_order_relaxed); }
@@ -151,6 +162,7 @@ private:
 
     LooperEngine mLooper;
     NamChain mNamChain;
+    IrProcessor mIrProcessor;  // fixed Slot D (cab IR), post-amp
     std::array<std::atomic<double>, NamChain::kNumSlots> mNamExpectedRate{-1.0, -1.0, -1.0};
 
     // Pre-allocated conversion buffers (sized in start()).

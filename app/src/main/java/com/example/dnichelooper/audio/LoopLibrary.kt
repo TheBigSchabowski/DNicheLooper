@@ -36,7 +36,7 @@ object LoopLibrary {
             MediaStore.Audio.Media.DURATION,
         )
         val selection = "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?"
-        val selectionArgs = arrayOf("${Environment.DIRECTORY_MUSIC}/NAMLooper%")
+        val selectionArgs = arrayOf("${Environment.DIRECTORY_MUSIC}/DNicheLooper%")
         val order = "${MediaStore.Audio.Media.DATE_ADDED} DESC"
 
         val result = mutableListOf<SavedLoop>()
@@ -57,7 +57,7 @@ object LoopLibrary {
     }
 
     private fun listAppMusicDir(context: Context): List<SavedLoop> {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "NAMLooper")
+        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "DNicheLooper")
         return dir.listFiles { f -> f.isFile && f.extension == "m4a" }
             ?.sortedByDescending { it.lastModified() }
             ?.map { SavedLoop(Uri.fromFile(it), it.name, 0L) }

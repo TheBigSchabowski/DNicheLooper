@@ -1,15 +1,32 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
+# Built application files / APKs
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Build output
 /build
-/captures
-.externalNativeBuild
+/app/build
+/app/release
+captures/
+
+# Gradle / CMake native build cache
+.gradle
 .cxx
+.externalNativeBuild
+
+# Local config (SDK path etc.) — must never be committed
+/local.properties
 local.properties
+
+# IntelliJ / Android Studio
+*.iml
+.idea/caches
+.idea/libraries
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+
+# OS / misc
+.DS_Store

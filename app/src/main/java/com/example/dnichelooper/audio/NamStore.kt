@@ -7,11 +7,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-/** One named snapshot of all three amp slots (model file names + active slot). */
+/** One named snapshot of all three amp slots (model file names + active slot) and the cab IR (Slot D). */
 data class NamPreset(
     val name: String,
     val slotFileNames: List<String?>,
     val activeSlot: Int,
+    val ir: String? = null,  // Slot D cab-IR file name, or null = bypass
 )
 
 /**
@@ -63,12 +64,21 @@ object NamStore {
             ?: emptyList()
     }
 
-    fun savePreset(context: Context, name: String, slotFileNames: List<String?>, activeSlot: Int) {
+    fun savePreset(
+        context: Context,
+        name: String,
+        slotFileNames: List<String?>,
+        activeSlot: Int,
+        ir: String?,
+    ) {
         val dir = presetsDir(context)
         check(dir.isDirectory || dir.mkdirs()) { "Cannot create ${dir.absolutePath}" }
         val json = JSONObject().apply {
             put("slots", JSONArray(slotFileNames.map { it ?: JSONObject.NULL }))
             put("active", activeSlot)
+            // Slot D cab IR (file name | null). Older presets without this
+            // field load as null (= no IR); keep it optional on read.
+            put("ir", ir ?: JSONObject.NULL)
         }
         presetFile(context, name).writeText(json.toString())
     }
@@ -81,10 +91,14 @@ object NamStore {
         val slots = (0 until NUM_SLOTS).map { i ->
             if (i < slotsJson.length() && !slotsJson.isNull(i)) slotsJson.getString(i) else null
         }
+        // "ir" is optional: presets saved before Slot D existed have no such
+        // field and load as null (= bypass), as do presets with an explicit null.
+        val ir = if (json.has("ir") && !json.isNull("ir")) json.getString("ir") else null
         return NamPreset(
             name = name,
             slotFileNames = slots,
             activeSlot = json.optInt("active", 0).coerceIn(0, NUM_SLOTS - 1),
+            ir = ir,
         )
     }
 

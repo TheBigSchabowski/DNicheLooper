@@ -46,6 +46,7 @@ add_library(namlooper SHARED
         LooperEngine.cpp
         RhythmSection.cpp
         NamChain.cpp
+        IrProcessor.cpp
         AudioEngine.cpp
         jni_bridge.cpp)
 

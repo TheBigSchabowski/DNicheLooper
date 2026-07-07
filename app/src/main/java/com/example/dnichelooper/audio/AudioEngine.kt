@@ -92,6 +92,11 @@ object AudioEngine {
     /** Frees models the audio thread retired after a swap; call from the UI poll. */
     fun namMaintenance() = nativeNamMaintenance()
 
+    // --- Slot D: fixed cabinet IR (global, post-amp). An empty slot = bypass.
+    /** Loads a mono float IR at the engine sample rate into Slot D. */
+    fun irLoad(coeffs: FloatArray) = nativeIrLoad(coeffs)
+    fun irClear() = nativeIrClear()
+
     fun setMonitor(enabled: Boolean) = nativeSetMonitor(enabled)
     fun setInputGain(gain: Float) = nativeSetInputGain(gain)
     fun setOutputGain(gain: Float) = nativeSetOutputGain(gain)
@@ -144,6 +149,8 @@ object AudioEngine {
     private external fun nativeNamSetActiveSlot(slot: Int)
     private external fun nativeNamExpectedSampleRate(slot: Int): Double
     private external fun nativeNamMaintenance()
+    private external fun nativeIrLoad(coeffs: FloatArray)
+    private external fun nativeIrClear()
     private external fun nativeSetMonitor(enabled: Boolean)
     private external fun nativeSetInputGain(gain: Float)
     private external fun nativeSetOutputGain(gain: Float)

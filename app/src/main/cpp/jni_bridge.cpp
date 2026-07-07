@@ -238,4 +238,25 @@ Java_com_example_dnichelooper_audio_AudioEngine_nativeReadDspLoad(
     return gEngine.readDspLoad();
 }
 
+// --- IR loader (Slot D, fixed/global cab IR) -------------------------
+JNIEXPORT void JNICALL
+Java_com_example_dnichelooper_audio_AudioEngine_nativeIrLoad(
+        JNIEnv* env, jobject /*thiz*/, jfloatArray coeffs) {
+    const jsize length = env->GetArrayLength(coeffs);
+    jfloat* ptr = (length > 0) ? env->GetFloatArrayElements(coeffs, nullptr) : nullptr;
+    if (length > 0 && ptr == nullptr) {
+        return;
+    }
+    gEngine.irLoad(ptr, static_cast<int32_t>(length));
+    if (ptr != nullptr) {
+        env->ReleaseFloatArrayElements(coeffs, ptr, JNI_ABORT);
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_dnichelooper_audio_AudioEngine_nativeIrClear(
+        JNIEnv* /*env*/, jobject /*thiz*/) {
+    gEngine.irClear();
+}
+
 }  // extern "C"

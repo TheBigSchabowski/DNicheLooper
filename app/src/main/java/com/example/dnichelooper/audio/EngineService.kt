@@ -36,7 +36,7 @@ class EngineService : Service() {
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("NAM Looper")
+            .setContentTitle("DNicheLooper")
             .setContentText("Audio engine running")
             .setOngoing(true)
             .setContentIntent(contentIntent)

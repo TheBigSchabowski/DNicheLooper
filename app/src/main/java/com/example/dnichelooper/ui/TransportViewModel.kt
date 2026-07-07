@@ -16,6 +16,7 @@ import com.example.dnichelooper.audio.EngineService
 import com.example.dnichelooper.audio.LoopLibrary
 import com.example.dnichelooper.audio.LoopSaver
 import com.example.dnichelooper.audio.LooperCommand
+import com.example.dnichelooper.audio.IrStore
 import com.example.dnichelooper.audio.NamStore
 import com.example.dnichelooper.audio.SavedLoop
 import com.example.dnichelooper.audio.LooperState
@@ -70,6 +71,10 @@ data class TransportUiState(
     val namBusy: Boolean = false,
     val namMessage: String? = null,
     val namPresets: List<String> = emptyList(),
+    // Slot D: fixed cab IR (global, not part of A/B/C switching).
+    val irFileName: String? = null,  // null = bypass
+    val irBusy: Boolean = false,
+    val irMessage: String? = null,
 )
 
 class TransportViewModel(application: Application) : AndroidViewModel(application) {
@@ -176,6 +181,14 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                     AudioEngine.setRhythmVolume(s.rhythmVolume)
                     AudioEngine.setLoopVolume(s.loopVolume)
                     AudioEngine.setAutoLoopBars(if (s.autoLoopEnabled) s.autoLoopBars else 0)
+                    // Re-decode the cab IR at the now-valid engine sample rate
+                    // (the original file is kept; only a rendered array would go stale).
+                    val irName = _uiState.value.irFileName
+                    if (irName != null) {
+                        applyIrFromFile(irName, AudioEngine.sampleRate)
+                    } else {
+                        AudioEngine.irClear()
+                    }
                     _uiState.update {
                         it.copy(
                             engineRunning = true,
@@ -276,7 +289,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update { it.copy(saveMessage = null) }
     }
 
-    /** Snapshots the loop and encodes it to Music/NAMLooper — audio keeps running. */
+    /** Snapshots the loop and encodes it to Music/DNicheLooper — audio keeps running. */
     fun saveLoop(name: String? = null) {
         val state = _uiState.value
         if (state.saving || state.loopLengthFrames <= 0 || state.sampleRate <= 0) return
@@ -433,6 +446,80 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // --- Slot D: fixed cab IR (global, post-amp) -------------------------
+
+    /** Copies the picked audio file into app storage and loads it as Slot D. */
+    fun loadIr(uri: Uri) {
+        if (_uiState.value.irBusy) return
+        _uiState.update { it.copy(irBusy = true, irMessage = null) }
+        viewModelScope.launch(Dispatchers.Default) {
+            val result = runCatching {
+                val file = IrStore.importIr(getApplication(), uri)
+                file.name
+            }
+            _uiState.update { st ->
+                result.fold(
+                    onSuccess = { fileName ->
+                        st.copy(
+                            irBusy = false,
+                            irFileName = fileName,
+                            irMessage = "IR staged: $fileName",
+                        )
+                    },
+                    onFailure = { e ->
+                        st.copy(
+                            irBusy = false,
+                            irMessage = "IR import failed: ${e.message ?: e.javaClass.simpleName}",
+                        )
+                    },
+                )
+            }
+            // Decode + push to the engine at the current rate (only when the
+            // engine is actually running; otherwise the IR is staged and gets
+            // decoded fresh on the next engine start).
+            val name = _uiState.value.irFileName ?: return@launch
+            val rate = _uiState.value.sampleRate
+            if (_uiState.value.engineRunning && rate > 0) {
+                applyIrFromFile(name, rate)
+            }
+        }
+    }
+
+    fun clearIr() {
+        AudioEngine.irClear()
+        _uiState.update { it.copy(irFileName = null, irMessage = null) }
+    }
+
+    /**
+     * Decodes [fileName] to mono float at the current engine sample rate and
+     * pushes it into Slot D. No-op (clears) when the file is missing or the
+     * engine is not running. Runs on a worker scope; safe to call on restart.
+     */
+    private fun applyIrFromFile(fileName: String, rate: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (rate <= 0) return@launch
+            val file = IrStore.irFile(getApplication(), fileName)
+            if (!file.isFile) {
+                _uiState.update { it.copy(irMessage = "IR file missing: $fileName") }
+                return@launch
+            }
+            val result = runCatching {
+                val coeffs = IrStore.decode(getApplication(), file, rate)
+                check(coeffs.isNotEmpty()) { "Decoded no audio from $fileName" }
+                AudioEngine.irLoad(coeffs)
+            }
+            _uiState.update { st ->
+                result.fold(
+                    onSuccess = { st.copy(irMessage = "Cab IR active: $fileName") },
+                    onFailure = { e ->
+                        AudioEngine.irClear()
+                        st.copy(irMessage = "IR load failed: ${e.message ?: e.javaClass.simpleName}")
+                    },
+                )
+            }
+        }
+    }
+
     fun refreshNamPresets() {
         viewModelScope.launch(Dispatchers.IO) {
             val presets = runCatching { NamStore.listPresets(getApplication()) }
@@ -445,7 +532,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
         val st = _uiState.value
         viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching {
-                NamStore.savePreset(getApplication(), name, st.namSlots, st.namActiveSlot)
+                NamStore.savePreset(getApplication(), name, st.namSlots, st.namActiveSlot, st.irFileName)
             }
             val presets = runCatching { NamStore.listPresets(getApplication()) }
                 .getOrDefault(_uiState.value.namPresets)
@@ -489,6 +576,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                             namBusy = false,
                             namSlots = preset.slotFileNames,
                             namActiveSlot = preset.activeSlot,
+                            irFileName = preset.ir,
                             namMessage = "Preset loaded: $name",
                         )
                     },
@@ -499,6 +587,14 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                         )
                     },
                 )
+            }
+            // Apply Slot D from the preset (decode at the current rate, or
+            // clear it). No effect until the engine runs.
+            val irName = _uiState.value.irFileName
+            if (irName != null && _uiState.value.engineRunning) {
+                applyIrFromFile(irName, _uiState.value.sampleRate)
+            } else if (irName == null) {
+                AudioEngine.irClear()
             }
         }
     }
