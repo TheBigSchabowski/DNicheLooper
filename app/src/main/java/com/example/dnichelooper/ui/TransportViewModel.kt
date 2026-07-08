@@ -18,6 +18,7 @@ import com.example.dnichelooper.audio.LoopSaver
 import com.example.dnichelooper.audio.LooperCommand
 import com.example.dnichelooper.audio.IrStore
 import com.example.dnichelooper.audio.NamStore
+import com.example.dnichelooper.audio.WavWriter
 import com.example.dnichelooper.audio.SavedLoop
 import com.example.dnichelooper.audio.LooperState
 import com.example.dnichelooper.audio.UsbAudioInterface
@@ -75,6 +76,11 @@ data class TransportUiState(
     val irFileName: String? = null,  // null = bypass
     val irBusy: Boolean = false,
     val irMessage: String? = null,
+    // Compare mode: A/B bypass states (Clean / Amp / Amp+IR).
+    val compareMode: Int = 2,  // 0=Clean, 1=Amp, 2=Amp+IR
+    val capturing: Boolean = false,
+    val captureSeconds: Float = 0f,
+    val captureMessage: String? = null,
 )
 
 class TransportViewModel(application: Application) : AndroidViewModel(application) {
@@ -189,6 +195,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                     } else {
                         AudioEngine.irClear()
                     }
+                    setCompareMode(s.compareMode)
                     _uiState.update {
                         it.copy(
                             engineRunning = true,
@@ -488,6 +495,61 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearIr() {
         AudioEngine.irClear()
         _uiState.update { it.copy(irFileName = null, irMessage = null) }
+    }
+
+    // --- Compare mode: Clean (0) / Amp (1) / Amp+IR (2) -----------------
+    // Bypasses keep the loaded model/IR so switching is instant (no reload).
+    fun setCompareMode(mode: Int) {
+        val m = mode.coerceIn(0, 2)
+        AudioEngine.setNamBypass(m == 0)          // Clean = bypass amp
+        AudioEngine.setIrBypass(m != 2)           // only Amp+IR keeps the IR
+        _uiState.update { it.copy(compareMode = m) }
+    }
+
+    fun startCapture() {
+        if (_uiState.value.capturing || !_uiState.value.engineRunning) return
+        AudioEngine.captureStart()
+        _uiState.update { it.copy(capturing = true, captureSeconds = 0f, captureMessage = null) }
+        viewModelScope.launch {
+            while (_uiState.value.capturing) {
+                delay(200)
+                // approximate: the native buffer fills at the engine rate
+                val rate = _uiState.value.sampleRate
+                if (rate > 0) {
+                    _uiState.update { it.copy(captureSeconds = it.captureSeconds + 0.2f) }
+                }
+                if (_uiState.value.captureSeconds >= 85f) break // native cap ~90s
+            }
+        }
+    }
+
+    fun stopCapture() {
+        if (!_uiState.value.capturing) return
+        _uiState.update { it.copy(capturing = false) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val rate = _uiState.value.sampleRate
+            val samples = AudioEngine.copyCapture()
+            if (samples == null || samples.isEmpty() || rate <= 0) {
+                _uiState.update { it.copy(captureMessage = "Capture empty") }
+                return@launch
+            }
+            val result = runCatching {
+                val ctx: android.content.Context = getApplication()
+                val dir = java.io.File(ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC), "DNicheLooper")
+                check(dir.isDirectory || dir.mkdirs()) { "Cannot create ${dir.absolutePath}" }
+                val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+                val name = "DNicheLooper_$stamp.wav"
+                val file = java.io.File(dir, name)
+                WavWriter.writeMono(file, samples, rate)
+                name
+            }
+            _uiState.update {
+                it.copy(captureMessage = result.fold(
+                    onSuccess = { n -> "Saved: $n (${samples.size / rate}s)" },
+                    onFailure = { e -> "Capture failed: ${e.message ?: e.javaClass.simpleName}" },
+                ))
+            }
+        }
     }
 
     /**

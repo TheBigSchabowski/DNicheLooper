@@ -63,7 +63,7 @@ void NamChain::process(const float* input, float* output, int32_t numFrames) {
         adoptIncoming(slot);
     }
     nam::DSP* dsp = mSlots[activeSlot()].active;
-    if (dsp == nullptr) {
+    if (mBypass.load(std::memory_order_relaxed) || dsp == nullptr) {
         std::copy(input, input + numFrames, output);
         return;
     }

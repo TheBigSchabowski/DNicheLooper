@@ -40,6 +40,9 @@ public:
     // retired ones and Reset all live models (Reset prewarns by default).
     void prepare(double sampleRate, int maxBufferSize);
 
+    // Compare: bypass all slots (dry pass-through) without unloading.
+    void setBypass(bool bypass) { mBypass.store(bypass, std::memory_order_relaxed); }
+
     void setActiveSlot(int slot) {
         if (slot >= 0 && slot < kNumSlots) {
             mActiveSlot.store(slot, std::memory_order_relaxed);
@@ -66,4 +69,5 @@ private:
 
     Slot mSlots[kNumSlots];
     std::atomic<int> mActiveSlot{0};
+    std::atomic<bool> mBypass{false};
 };

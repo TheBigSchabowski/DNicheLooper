@@ -36,6 +36,9 @@ public:
     /** App thread, periodic (UI poll): frees IRs the audio thread retired. */
     void collectGarbage();
 
+    // Compare: bypass the IR (keep it loaded) without re-decoding.
+    void setBypass(bool bypass) { mBypass.store(bypass, std::memory_order_relaxed); }
+
     /**
      * App thread with the streams stopped: adopt any pending IR, drop retired
      * ones and reset the delay line. Safe because no callback is running.
@@ -72,4 +75,5 @@ private:
     // Capacity is fixed at 2*kMaxTaps; only the first 2*tapCount are used.
     std::vector<float> mLine;
     int32_t mWritePos = 0;  // next write index, in [0, tapCount)
+    std::atomic<bool> mBypass{false};
 };

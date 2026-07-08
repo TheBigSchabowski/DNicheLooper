@@ -286,6 +286,12 @@ fun TransportScreen(viewModel: TransportViewModel) {
                 )
             }
         }
+
+        CompareCard(
+            state = state,
+            onMode = viewModel::setCompareMode,
+            onRec = { if (state.capturing) viewModel.stopCapture() else viewModel.startCapture() },
+        )
     }
 }
 
@@ -720,6 +726,72 @@ private fun RecordButton(state: TransportUiState, onClick: () -> Unit) {
             fontSize = if (counting) 44.sp else 20.sp,
             fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+private val CompareModeNames = listOf("Clean", "Amp", "Amp+IR")
+
+@Composable
+private fun CompareCard(
+    state: TransportUiState,
+    onMode: (Int) -> Unit,
+    onRec: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "Compare",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "A/B the chain instantly (the loaded model/IR stay), then record a .wav to compare against the desktop plugin.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CompareModeNames.forEachIndexed { i, label ->
+                    FilterChip(
+                        selected = state.compareMode == i,
+                        onClick = { onMode(i) },
+                        label = { Text(label) },
+                        enabled = state.engineRunning,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Button(
+                    onClick = onRec,
+                    enabled = state.engineRunning,
+                    colors = if (state.capturing) ButtonDefaults.buttonColors(containerColor = RecordRed)
+                    else ButtonDefaults.buttonColors(),
+                ) { Text(if (state.capturing) "STOP REC" else "REC .WAV") }
+                if (state.capturing) {
+                    Text(
+                        "%.1fs".format(state.captureSeconds),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            state.captureMessage?.let { msg ->
+                Text(
+                    msg,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (msg.contains("failed", ignoreCase = true)) MaterialTheme.colorScheme.error
+                    else PlayGreen,
+                )
+            }
+        }
     }
 }
 

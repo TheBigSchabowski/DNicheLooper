@@ -30,6 +30,7 @@ class AudioEngine : public oboe::AudioStreamDataCallback,
                     public oboe::AudioStreamErrorCallback {
 public:
     static constexpr int32_t kMaxLoopSeconds = 120;
+    static constexpr int32_t kMaxCaptureSeconds = 90;
 
     // App thread. Opens + starts both streams on the given device ids.
     // Returns false (and leaves everything closed) on any failure.
@@ -106,6 +107,27 @@ public:
     void irLoad(const float* coeffs, int32_t numTaps) { mIrProcessor.publish(coeffs, numTaps); }
 
     void irClear() { mIrProcessor.publish(nullptr, 0); }
+
+    // --- Compare mode: instant bypass (keep model/IR loaded) + live capture ---
+    void setNamBypass(bool bypass) { mNamChain.setBypass(bypass); }
+    void setIrBypass(bool bypass) { mIrProcessor.setBypass(bypass); }
+
+    // Capture the live post-amp+IR signal (pre-looper) to a pre-allocated
+    // buffer; the audio thread only appends, allocation happens in start().
+    void startCapture() {
+        mCaptureFrames.store(0, std::memory_order_relaxed);
+        mCapturing.store(true, std::memory_order_relaxed);
+    }
+    int32_t stopCapture() {
+        mCapturing.store(false, std::memory_order_relaxed);
+        return mCaptureFrames.load(std::memory_order_relaxed);
+    }
+    int32_t copyCapture(float* dest, int32_t maxSamples) {
+        std::lock_guard<std::mutex> lock(mLock);
+        const int32_t n = std::min(mCaptureFrames.load(std::memory_order_relaxed), maxSamples);
+        if (n > 0) std::copy_n(mCaptureBuf.data(), static_cast<size_t>(n), dest);
+        return n;
+    }
 
     void setMonitorEnabled(bool enabled) { mMonitorEnabled.store(enabled, std::memory_order_relaxed); }
     void setInputGain(float gain) { mInputGain.store(gain, std::memory_order_relaxed); }
@@ -190,4 +212,9 @@ private:
     std::atomic<float> mFxPeak{0.0f};
     std::atomic<float> mOutputPeak{0.0f};
     std::atomic<float> mDspLoad{0.0f};
+
+    // Live compare capture (post-amp+IR, pre-looper).
+    std::vector<float> mCaptureBuf;
+    std::atomic<bool> mCapturing{false};
+    std::atomic<int32_t> mCaptureFrames{0};
 };

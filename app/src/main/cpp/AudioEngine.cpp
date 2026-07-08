@@ -116,6 +116,9 @@ bool AudioEngine::start(int32_t inputDeviceId, int32_t outputDeviceId) {
     mMonoIn.assign(static_cast<size_t>(mMaxBlockFrames), 0.0f);
     mMonoFx.assign(static_cast<size_t>(mMaxBlockFrames), 0.0f);
     mMonoOut.assign(static_cast<size_t>(mMaxBlockFrames), 0.0f);
+    mCaptureBuf.assign(static_cast<size_t>(kMaxCaptureSeconds) * mSampleRate, 0.0f);
+    mCapturing.store(false, std::memory_order_relaxed);
+    mCaptureFrames.store(0, std::memory_order_relaxed);
 
     // No callback runs yet: adopt pending NAM models and size them for the
     // new stream (Reset prewarns, which is why this happens before start).
@@ -239,6 +242,18 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* /*stream*/
     // Slot D: fixed cabinet IR, post-amp and pre-FX-metering (so the FX
     // meter reads post-IR). Processes the block in place; bypass when empty.
     mIrProcessor.process(mMonoFx.data(), numFrames);
+    // Compare capture: record the post-amp+IR signal (pre-looper) while
+    // capturing. Appends lock-free; stops at the buffer capacity.
+    if (mCapturing.load(std::memory_order_relaxed)) {
+        const int32_t have = mCaptureFrames.load(std::memory_order_relaxed);
+        const int32_t cap = static_cast<int32_t>(mCaptureBuf.size());
+        if (have < cap) {
+            const int32_t n = std::min(numFrames, cap - have);
+            std::copy_n(mMonoFx.data(), static_cast<size_t>(n),
+                        mCaptureBuf.data() + static_cast<size_t>(have));
+            mCaptureFrames.store(have + n, std::memory_order_relaxed);
+        }
+    }
     float fxPeak = 0.0f;
     for (int32_t i = 0; i < numFrames; ++i) {
         const float magnitude = mMonoFx[i] < 0.0f ? -mMonoFx[i] : mMonoFx[i];

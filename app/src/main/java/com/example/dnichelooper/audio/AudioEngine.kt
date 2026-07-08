@@ -97,6 +97,22 @@ object AudioEngine {
     fun irLoad(coeffs: FloatArray) = nativeIrLoad(coeffs)
     fun irClear() = nativeIrClear()
 
+    // --- Compare mode: instant bypass (keep model/IR loaded) ---
+    fun setNamBypass(bypass: Boolean) = nativeNamBypass(bypass)
+    fun setIrBypass(bypass: Boolean) = nativeIrBypass(bypass)
+
+    // --- Live capture of the post-amp+IR signal (pre-looper) ---
+    fun captureStart() = nativeCaptureStart()
+    fun captureStop(): Int = nativeCaptureStop()
+    /** Returns the captured mono samples (at the engine sample rate), or null. */
+    fun copyCapture(): FloatArray? {
+        val n = captureStop()
+        if (n <= 0) return null
+        val a = FloatArray(n)
+        val copied = nativeCopyCapture(a)
+        return if (copied > 0) a.copyOf(copied) else null
+    }
+
     fun setMonitor(enabled: Boolean) = nativeSetMonitor(enabled)
     fun setInputGain(gain: Float) = nativeSetInputGain(gain)
     fun setOutputGain(gain: Float) = nativeSetOutputGain(gain)
@@ -151,6 +167,11 @@ object AudioEngine {
     private external fun nativeNamMaintenance()
     private external fun nativeIrLoad(coeffs: FloatArray)
     private external fun nativeIrClear()
+    private external fun nativeNamBypass(bypass: Boolean)
+    private external fun nativeIrBypass(bypass: Boolean)
+    private external fun nativeCaptureStart()
+    private external fun nativeCaptureStop(): Int
+    private external fun nativeCopyCapture(dest: FloatArray): Int
     private external fun nativeSetMonitor(enabled: Boolean)
     private external fun nativeSetInputGain(gain: Float)
     private external fun nativeSetOutputGain(gain: Float)

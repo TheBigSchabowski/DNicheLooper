@@ -259,4 +259,40 @@ Java_com_example_dnichelooper_audio_AudioEngine_nativeIrClear(
     gEngine.irClear();
 }
 
+// --- Compare mode: bypass + live capture -----------------------------
+JNIEXPORT void JNICALL
+Java_com_example_dnichelooper_audio_AudioEngine_nativeNamBypass(
+        JNIEnv* /*env*/, jobject /*thiz*/, jboolean bypass) {
+    gEngine.setNamBypass(bypass == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_dnichelooper_audio_AudioEngine_nativeIrBypass(
+        JNIEnv* /*env*/, jobject /*thiz*/, jboolean bypass) {
+    gEngine.setIrBypass(bypass == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_dnichelooper_audio_AudioEngine_nativeCaptureStart(
+        JNIEnv* /*env*/, jobject /*thiz*/) {
+    gEngine.startCapture();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_example_dnichelooper_audio_AudioEngine_nativeCaptureStop(
+        JNIEnv* /*env*/, jobject /*thiz*/) {
+    return gEngine.stopCapture();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_example_dnichelooper_audio_AudioEngine_nativeCopyCapture(
+        JNIEnv* env, jobject /*thiz*/, jfloatArray dest) {
+    const jsize capacity = env->GetArrayLength(dest);
+    jfloat* ptr = env->GetFloatArrayElements(dest, nullptr);
+    if (ptr == nullptr) return 0;
+    const int32_t copied = gEngine.copyCapture(ptr, static_cast<int32_t>(capacity));
+    env->ReleaseFloatArrayElements(dest, ptr, 0);
+    return copied;
+}
+
 }  // extern "C"
