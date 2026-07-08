@@ -8,9 +8,8 @@ This is the Android sister project of the desktop NicheLooper; the signal flow a
 slot concept (switchable amp A/B/C + a fixed cab IR D + looper) match the desktop
 app, but the engine is a native Oboe full-duplex implementation for Android.
 
-> ⚠️ The DSP/audio verification (engine start at the interface, dsp% budget, sound
-> check) is still pending a connected USB interface. The code builds and runs; the
-> on-device audio sign-off is not yet done.
+> ✅ Verified on-device: the engine starts on a connected USB interface and passes
+> the audio sound check on a Pixel 9.
 
 ## Signal flow
 
