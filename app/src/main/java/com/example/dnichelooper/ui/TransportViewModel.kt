@@ -51,7 +51,7 @@ data class TransportUiState(
     val drumsEnabled: Boolean = false,
     val timeSignature: Int = 0,          // 0 = 4/4, 1 = 3/4, 2 = 6/8
     val countInEnabled: Boolean = false,
-    val rhythmVolume: Float = 1f,
+    val rhythmVolume: Float = 0.15f,  // drum+click default 15% (install); user can raise
     val loopVolume: Float = 1f,
     val autoLoopEnabled: Boolean = false,
     val autoLoopBars: Int = 4,           // 4, 6 or 8
