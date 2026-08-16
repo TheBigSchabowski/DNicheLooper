@@ -18,11 +18,12 @@ import com.example.dnichelooper.audio.LoopSaver
 import com.example.dnichelooper.audio.LooperCommand
 import com.example.dnichelooper.audio.IrStore
 import com.example.dnichelooper.audio.NamStore
+import com.example.dnichelooper.audio.RhythmTables
 import com.example.dnichelooper.audio.WavWriter
 import com.example.dnichelooper.audio.SavedLoop
 import com.example.dnichelooper.audio.LooperState
-import com.example.dnichelooper.audio.UsbAudioInterface
-import com.example.dnichelooper.audio.UsbDeviceDetector
+import com.example.dnichelooper.audio.AudioRoute
+import com.example.dnichelooper.audio.AudioRouteDetector
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -35,7 +36,13 @@ import kotlinx.coroutines.launch
 
 data class TransportUiState(
     val hasPermission: Boolean = false,
-    val usbDevice: UsbAudioInterface? = null,
+    val usbDevice: AudioRoute? = null,
+    /** User opted to run on the phone's own mic/speaker (no interface). */
+    val builtInEnabled: Boolean = false,
+    /** Where built-in audio would currently go, e.g. "Headphones". */
+    val builtInOutput: String = "Phone speaker",
+    /** The route the engine actually opened on; null while stopped. */
+    val activeRoute: AudioRoute? = null,
     val engineRunning: Boolean = false,
     val looperState: LooperState = LooperState.EMPTY,
     val positionFrames: Int = 0,
@@ -49,7 +56,10 @@ data class TransportUiState(
     val bpm: Int = 120,
     val metronomeEnabled: Boolean = false,
     val drumsEnabled: Boolean = false,
-    val timeSignature: Int = 0,          // 0 = 4/4, 1 = 3/4, 2 = 6/8
+    val drumsMuted: Boolean = false,
+    val rhythm: RhythmTables = RhythmTables(),
+    val timeSignature: Int = 0,          // index into rhythm.timeSignatureNames
+    val groove: Int = 0,                 // index into rhythm.grooveNames
     val countInEnabled: Boolean = false,
     val rhythmVolume: Float = 0.15f,  // drum+click default 15% (install); user can raise
     val loopVolume: Float = 1f,
@@ -88,7 +98,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     private val audioManager =
         application.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-    private val detector = UsbDeviceDetector(audioManager)
+    private val detector = AudioRouteDetector(audioManager)
 
     private val _uiState = MutableStateFlow(TransportUiState())
     val uiState: StateFlow<TransportUiState> = _uiState.asStateFlow()
@@ -98,14 +108,34 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         detector.startWatching()
 
+        // One-time read of the engine's signature/groove tables for the menus.
+        // Constant data, so it works before the engine starts; failing to load
+        // the native library simply leaves the selectors empty, which is the
+        // same situation in which nothing would play anyway.
         viewModelScope.launch {
-            detector.device.collect { device ->
+            val tables = runCatching { AudioEngine.rhythmTables() }.getOrNull()
+            if (tables != null) {
+                _uiState.update { it.copy(rhythm = tables) }
+            }
+        }
+
+        viewModelScope.launch {
+            detector.usb.collect { device ->
                 _uiState.update { it.copy(usbDevice = device) }
                 if (device != null) {
                     maybeStartEngine()
-                } else if (_uiState.value.engineRunning) {
-                    stopEngine("USB audio interface disconnected. Playback stopped — built-in audio is not used.")
+                } else if (_uiState.value.activeRoute?.isUsb == true) {
+                    // The interface went away mid-session. Built-in audio can
+                    // take over, but only on an explicit tap — silently moving
+                    // a live looper onto the phone speaker would howl.
+                    stopEngine("USB audio interface disconnected. Switch on \"Phone audio\" to keep going without it.")
                 }
+            }
+        }
+
+        viewModelScope.launch {
+            detector.builtInOutput.collect { output ->
+                _uiState.update { it.copy(builtInOutput = output) }
             }
         }
 
@@ -116,7 +146,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                 delay(POLL_MS)
                 if (!_uiState.value.engineRunning) continue
                 if (AudioEngine.isDisconnected) {
-                    stopEngine("USB audio interface disconnected. Playback stopped — built-in audio is not used.")
+                    stopEngine("Audio device disconnected. Playback stopped.")
                 } else if (!AudioEngine.isRunning) {
                     // Non-disconnect stream error: the native engine already
                     // shut itself down (onErrorAfterClose).
@@ -160,9 +190,20 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun retryStart() = maybeStartEngine()
 
+    /**
+     * The route the engine would open on right now: a connected interface
+     * wins, otherwise the phone itself if the user switched that on. Null
+     * means there is nothing to start on.
+     */
+    private fun TransportUiState.effectiveRoute(): AudioRoute? = when {
+        usbDevice != null -> usbDevice
+        builtInEnabled -> AudioRoute.builtIn(builtInOutput)
+        else -> null
+    }
+
     private fun maybeStartEngine() {
         val state = _uiState.value
-        val device = state.usbDevice ?: return
+        val device = state.effectiveRoute() ?: return
         if (!state.hasPermission || state.engineRunning) return
         if (!startInProgress.compareAndSet(false, true)) return
 
@@ -172,7 +213,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                 DrumKitLoader.ensureLoaded(getApplication())
                 val ok = AudioEngine.start(device.inputDeviceId, device.outputDeviceId)
                 if (ok) {
-                    maxOutMediaVolume()
+                    if (device.isUsb) maxOutMediaVolume()
                     EngineService.start(getApplication())
                     // Re-apply UI-side settings to the fresh engine.
                     val s = _uiState.value
@@ -182,7 +223,9 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                     AudioEngine.setBpm(s.bpm)
                     AudioEngine.setMetronome(s.metronomeEnabled)
                     AudioEngine.setDrums(s.drumsEnabled)
+                    AudioEngine.setDrumsMuted(s.drumsMuted)
                     AudioEngine.setTimeSignature(s.timeSignature)
+                    AudioEngine.setGroove(s.groove)
                     AudioEngine.setCountIn(s.countInEnabled)
                     AudioEngine.setRhythmVolume(s.rhythmVolume)
                     AudioEngine.setLoopVolume(s.loopVolume)
@@ -199,6 +242,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             engineRunning = true,
+                            activeRoute = device,
                             looperState = LooperState.EMPTY,
                             positionFrames = 0,
                             loopLengthFrames = 0,
@@ -212,6 +256,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             engineRunning = false,
+                            activeRoute = null,
                             errorMessage = "Could not open duplex audio streams on \"${device.name}\".",
                         )
                     }
@@ -278,12 +323,38 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
             _uiState.update {
                 it.copy(
                     engineRunning = false,
+                    activeRoute = null,
                     looperState = LooperState.EMPTY,
                     positionFrames = 0,
                     loopLengthFrames = 0,
                     errorMessage = error,
                 )
             }
+        }
+    }
+
+    /**
+     * Runs the engine on the phone itself — built-in mic in, whatever Android
+     * is routing out (headphones if plugged in, speaker otherwise).
+     *
+     * On the speaker this is an open acoustic loop: the mic hears the output
+     * a few centimetres away, so monitoring and loop playback can feed back.
+     * That is physics, not a bug, and it is allowed here deliberately —
+     * the app only declines to raise the volume for you (see
+     * [maxOutMediaVolume], which stays USB-only for exactly this reason).
+     * Headphones remove the problem entirely.
+     *
+     * A connected interface always wins, so this switch changes nothing while
+     * one is plugged in.
+     */
+    fun setBuiltInAudio(enabled: Boolean) {
+        _uiState.update { it.copy(builtInEnabled = enabled) }
+        val state = _uiState.value
+        if (state.usbDevice != null) return  // interface takes precedence
+        if (enabled) {
+            maybeStartEngine()
+        } else if (state.activeRoute?.isUsb == false) {
+            stopEngine(null)
         }
     }
 
@@ -365,9 +436,33 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update { it.copy(drumsEnabled = enabled) }
     }
 
+    /**
+     * Live drop-out: silences the drums but leaves the bar clock (and the
+     * loop) running, so unmuting re-enters the groove in time.
+     */
+    fun toggleDrumsMute() {
+        val muted = !_uiState.value.drumsMuted
+        AudioEngine.setDrumsMuted(muted)
+        _uiState.update { it.copy(drumsMuted = muted) }
+    }
+
+    /**
+     * Switching the meter also moves to that meter's first groove — a groove
+     * is written for one bar length, so keeping the old one would either be
+     * ignored by the engine or fight the bar clock.
+     */
     fun setTimeSignature(index: Int) {
+        val state = _uiState.value
+        if (index == state.timeSignature) return
+        val groove = state.rhythm.groovesFor(index).firstOrNull() ?: state.groove
         AudioEngine.setTimeSignature(index)
-        _uiState.update { it.copy(timeSignature = index) }
+        AudioEngine.setGroove(groove)
+        _uiState.update { it.copy(timeSignature = index, groove = groove) }
+    }
+
+    fun setGroove(index: Int) {
+        AudioEngine.setGroove(index)
+        _uiState.update { it.copy(groove = index) }
     }
 
     fun setCountIn(enabled: Boolean) {

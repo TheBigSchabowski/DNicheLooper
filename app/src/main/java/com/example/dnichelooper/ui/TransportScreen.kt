@@ -63,18 +63,17 @@ private val RecordRed = Color(0xFFE53935)
 private val OverdubOrange = Color(0xFFFB8C00)
 private val PlayGreen = Color(0xFF43A047)
 
-private val TimeSignatureNames = listOf("4/4", "3/4", "6/8")
 private val AutoLoopBarChoices = listOf(4, 6, 8)
 
 private fun framesPerBeat(sampleRate: Int, bpm: Int): Int =
     if (sampleRate > 0 && bpm > 0) sampleRate * 60 / bpm else 0
 
-/** Beats per bar for the time-signature index (must match RhythmSection). */
-private fun beatsPerBar(timeSignature: Int): Int = when (timeSignature) {
-    1 -> 3   // 3/4
-    2 -> 6   // 6/8 (BPM counts eighths)
-    else -> 4
-}
+/**
+ * Beats per bar of the selected meter, read from the engine's own table
+ * rather than a copy kept here — a hardcoded list in the UI is exactly how
+ * this screen drifted out of sync with RhythmSection.cpp before.
+ */
+private fun TransportUiState.beatsPerBar(): Int = rhythm.beatsPerBar(timeSignature)
 
 @Composable
 fun TransportScreen(viewModel: TransportViewModel) {
@@ -94,7 +93,11 @@ fun TransportScreen(viewModel: TransportViewModel) {
             fontWeight = FontWeight.Bold,
         )
 
-        StatusCard(state = state, onRetry = viewModel::retryStart)
+        StatusCard(
+            state = state,
+            onRetry = viewModel::retryStart,
+            onBuiltInAudio = viewModel::setBuiltInAudio,
+        )
 
         var pickSlot by remember { mutableStateOf(0) }
         val pickModel = rememberLauncherForActivityResult(
@@ -237,7 +240,9 @@ fun TransportScreen(viewModel: TransportViewModel) {
             onMetronome = viewModel::setMetronome,
             onCountIn = viewModel::setCountIn,
             onDrums = viewModel::setDrums,
+            onToggleDrumsMute = viewModel::toggleDrumsMute,
             onTimeSignature = viewModel::setTimeSignature,
+            onGroove = viewModel::setGroove,
             onAutoLoop = viewModel::setAutoLoop,
             onAutoLoopBars = viewModel::setAutoLoopBars,
             onVolume = viewModel::setRhythmVolume,
@@ -296,7 +301,11 @@ fun TransportScreen(viewModel: TransportViewModel) {
 }
 
 @Composable
-private fun StatusCard(state: TransportUiState, onRetry: () -> Unit) {
+private fun StatusCard(
+    state: TransportUiState,
+    onRetry: () -> Unit,
+    onBuiltInAudio: (Boolean) -> Unit,
+) {
     val error = state.errorMessage
     if (error != null) {
         Card(
@@ -311,7 +320,7 @@ private fun StatusCard(state: TransportUiState, onRetry: () -> Unit) {
                     color = MaterialTheme.colorScheme.onErrorContainer,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                if (state.usbDevice != null && !state.engineRunning) {
+                if ((state.usbDevice != null || state.builtInEnabled) && !state.engineRunning) {
                     TextButton(onClick = onRetry) { Text("Retry") }
                 }
             }
@@ -320,58 +329,112 @@ private fun StatusCard(state: TransportUiState, onRetry: () -> Unit) {
     }
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Spacer(
-                modifier = Modifier
-                    .size(12.dp)
-                    .background(
-                        color = when {
-                            state.engineRunning -> PlayGreen
-                            state.usbDevice != null -> OverdubOrange
-                            else -> MaterialTheme.colorScheme.outline
-                        },
-                        shape = CircleShape,
-                    ),
-            )
-            Column {
-                val device = state.usbDevice
-                if (device == null) {
-                    Text(
-                        "No USB audio interface",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Text(
-                        "Connect your interface — built-in audio is not used.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    Text(
-                        device.name,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Text(
-                        if (state.engineRunning) {
-                            "${state.sampleRate} Hz · burst ${state.framesPerBurst}" +
-                                " · dsp ${(state.dspLoad * 100).toInt()}%" +
-                                " · cpu ${(state.appCpu * 100).toInt()}%" +
-                                " · xruns ${state.xRuns}"
-                        } else {
-                            "Starting engine…"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = when {
-                            !state.engineRunning -> MaterialTheme.colorScheme.onSurfaceVariant
-                            state.xRuns > 0 || state.dspLoad > 0.9f -> RecordRed
-                            state.dspLoad > 0.75f -> OverdubOrange
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Spacer(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(
+                            color = when {
+                                state.engineRunning -> PlayGreen
+                                state.usbDevice != null || state.builtInEnabled -> OverdubOrange
+                                else -> MaterialTheme.colorScheme.outline
+                            },
+                            shape = CircleShape,
+                        ),
+                )
+                Column {
+                    val engineLine = if (state.engineRunning) {
+                        "${state.sampleRate} Hz · burst ${state.framesPerBurst}" +
+                            " · dsp ${(state.dspLoad * 100).toInt()}%" +
+                            " · cpu ${(state.appCpu * 100).toInt()}%" +
+                            " · xruns ${state.xRuns}"
+                    } else {
+                        "Starting engine…"
+                    }
+                    val device = state.usbDevice
+                    when {
+                        device != null -> {
+                            Text(
+                                device.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                engineLine,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when {
+                                    !state.engineRunning -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    state.xRuns > 0 || state.dspLoad > 0.9f -> RecordRed
+                                    state.dspLoad > 0.75f -> OverdubOrange
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+
+                        state.builtInEnabled -> {
+                            Text(
+                                "Phone mic → ${state.builtInOutput}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                engineLine,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when {
+                                    !state.engineRunning -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    state.xRuns > 0 || state.dspLoad > 0.9f -> RecordRed
+                                    state.dspLoad > 0.75f -> OverdubOrange
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+
+                        else -> {
+                            Text(
+                                "No USB audio interface",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                "Connect an interface, or switch on phone audio below.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Only offered when no interface is connected: a real interface
+            // always wins, so the switch would do nothing while one is plugged
+            // in and an inert control is worse than none.
+            if (state.usbDevice == null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Phone audio", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            if (state.builtInOutput == "Phone speaker") {
+                                "Mic and speaker — can howl. Headphones fix it."
+                            } else {
+                                "Mic in, ${state.builtInOutput.lowercase(Locale.ROOT)} out."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = state.builtInEnabled,
+                        onCheckedChange = onBuiltInAudio,
                     )
                 }
             }
@@ -636,7 +699,7 @@ private fun LoopIndicator(state: TransportUiState) {
     }
 
     val beatFrames = framesPerBeat(rate, state.bpm)
-    val beats = beatsPerBar(state.timeSignature)
+    val beats = state.beatsPerBar()
     val barFrames = beatFrames * beats
     val autoLoopFrames =
         if (state.autoLoopEnabled && barFrames > 0) state.autoLoopBars * barFrames else 0
@@ -701,7 +764,7 @@ private fun RecordButton(state: TransportUiState, onClick: () -> Unit) {
         LooperState.COUNT_IN -> {
             val beatFrames = framesPerBeat(state.sampleRate, state.bpm)
             if (beatFrames > 0) {
-                "${(state.positionFrames / beatFrames + 1).coerceIn(1, beatsPerBar(state.timeSignature))}"
+                "${(state.positionFrames / beatFrames + 1).coerceIn(1, state.beatsPerBar())}"
             } else {
                 "…"
             }
@@ -802,7 +865,9 @@ private fun RhythmCard(
     onMetronome: (Boolean) -> Unit,
     onCountIn: (Boolean) -> Unit,
     onDrums: (Boolean) -> Unit,
+    onToggleDrumsMute: () -> Unit,
     onTimeSignature: (Int) -> Unit,
+    onGroove: (Int) -> Unit,
     onAutoLoop: (Boolean) -> Unit,
     onAutoLoopBars: (Int) -> Unit,
     onVolume: (Float) -> Unit,
@@ -868,7 +933,7 @@ private fun RhythmCard(
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f),
                 )
-                TimeSignatureNames.forEachIndexed { index, name ->
+                state.rhythm.timeSignatureNames.forEachIndexed { index, name ->
                     FilterChip(
                         selected = state.timeSignature == index,
                         onClick = { onTimeSignature(index) },
@@ -910,11 +975,61 @@ private fun RhythmCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Drums", style = MaterialTheme.typography.bodyLarge)
-                Switch(
-                    checked = state.drumsEnabled,
-                    onCheckedChange = onDrums,
-                    enabled = enabled,
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Live drop-out — the clock keeps running underneath, so
+                    // unmuting always lands back in the groove in time.
+                    FilterChip(
+                        selected = state.drumsMuted,
+                        onClick = onToggleDrumsMute,
+                        label = { Text("Mute") },
+                        enabled = enabled && state.drumsEnabled,
+                    )
+                    Switch(
+                        checked = state.drumsEnabled,
+                        onCheckedChange = onDrums,
+                        enabled = enabled,
+                    )
+                }
+            }
+
+            val grooves = state.rhythm.groovesFor(state.timeSignature)
+            if (grooves.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Groove",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    var expanded by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(
+                            onClick = { expanded = true },
+                            enabled = enabled,
+                        ) { Text(state.rhythm.grooveName(state.groove)) }
+                        DropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false },
+                        ) {
+                            grooves.forEach { index ->
+                                DropdownMenuItem(
+                                    text = { Text(state.rhythm.grooveName(index)) },
+                                    onClick = {
+                                        expanded = false
+                                        onGroove(index)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             Row(

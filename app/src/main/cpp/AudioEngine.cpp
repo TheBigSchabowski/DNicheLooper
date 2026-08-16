@@ -77,8 +77,10 @@ bool AudioEngine::openStreams(int32_t inputDeviceId, int32_t outputDeviceId) {
     mInputChannels = mInputStream->getChannelCount();
 
     if (mInputStream->getSampleRate() != mSampleRate) {
-        // Should be impossible on a single USB interface; Oboe's resampler
-        // was requested above, so this indicates a broken stream setup.
+        // Oboe's resampler was requested above, so a surviving mismatch means
+        // a broken stream setup — impossible on one USB interface, and on
+        // built-in audio it would mean Android handed back a rate it then
+        // refused to convert.
         LOGE("Sample rate mismatch: in=%d out=%d", mInputStream->getSampleRate(), mSampleRate);
         return false;
     }
@@ -98,9 +100,12 @@ bool AudioEngine::start(int32_t inputDeviceId, int32_t outputDeviceId) {
     closeStreamsLocked();
     mDisconnected.store(false, std::memory_order_relaxed);
 
-    if (inputDeviceId <= 0 || outputDeviceId <= 0) {
-        LOGE("Refusing to start without explicit USB device ids (in=%d out=%d)",
-             inputDeviceId, outputDeviceId);
+    // 0 is oboe::kUnspecified — "let Android pick the default endpoint". That
+    // is exactly what built-in mic/speaker mode passes, and it is also what
+    // makes the output follow headphones being plugged in or out without the
+    // engine restarting. Only a negative id is meaningless.
+    if (inputDeviceId < 0 || outputDeviceId < 0) {
+        LOGE("Invalid audio device ids (in=%d out=%d)", inputDeviceId, outputDeviceId);
         return false;
     }
 

@@ -12,7 +12,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <!-- Audio comes from the USB interface, not the built-in mic. -->
+    <!-- Audio normally comes from a USB interface; the built-in mic is used
+         only in phone-audio mode, so neither is a hard requirement. -->
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
