@@ -30,3 +30,11 @@ local.properties
 
 # OS / misc
 .DS_Store
+
+# Signier-Material gehoert nie ins Repo. Die echten Dateien liegen ausserhalb
+# (~/keystores/), diese Muster sind die zweite Sicherung gegen ein Versehen.
+*.jks
+*.keystore
+*.pass
+keystore.properties
+*signing.properties
