@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +42,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,7 +51,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,8 +83,12 @@ private fun framesPerBeat(sampleRate: Int, bpm: Int): Int =
 private fun TransportUiState.beatsPerBar(): Int = rhythm.beatsPerBar(timeSignature)
 
 @Composable
-fun TransportScreen(viewModel: TransportViewModel) {
+fun TransportScreen(
+    viewModel: TransportViewModel,
+    shortcutDispatcher: ShortcutDispatcher = remember(viewModel) { ShortcutDispatcher(viewModel) },
+) {
     val state by viewModel.uiState.collectAsState()
+    var showKeyBindingsDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -87,11 +98,38 @@ fun TransportScreen(viewModel: TransportViewModel) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(
-            text = "DNicheLooper",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "DNicheLooper",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            OutlinedButton(
+                onClick = { showKeyBindingsDialog = true },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Text("Tasten", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+
+        if (showKeyBindingsDialog) {
+            KeyBindingsDialog(
+                bindings = state.keyBindings,
+                capturingFor = state.capturingKeyFor,
+                shortcutDispatcher = shortcutDispatcher,
+                onStartCapture = viewModel::setCapturingKeyFor,
+                onUnbind = { action -> viewModel.assignKey(action, null) },
+                onResetDefaults = viewModel::resetKeyBindings,
+                onDismiss = {
+                    viewModel.setCapturingKeyFor(null)
+                    showKeyBindingsDialog = false
+                },
+            )
+        }
 
         StatusCard(
             state = state,
@@ -126,6 +164,7 @@ fun TransportScreen(viewModel: TransportViewModel) {
             onRefreshPresets = viewModel::refreshNamPresets,
             onLoadIr = { pickIr.launch(arrayOf("audio/*", "*/*")) },
             onClearIr = viewModel::clearIr,
+            onTextFieldFocusChange = viewModel::setTextFieldFocused,
         )
 
         LoopIndicator(state = state)
@@ -134,6 +173,20 @@ fun TransportScreen(viewModel: TransportViewModel) {
             state = state,
             onClick = viewModel::record,
         )
+
+        val recStopKey = state.keyBindings.labelFor(KeyAction.REC_STOP)
+        val recKey = state.keyBindings.labelFor(KeyAction.RECORD)
+        val hintParts = buildList {
+            if (recStopKey != "—") add("$recStopKey: Stop / Record")
+            if (recKey != "—") add("$recKey: Record")
+        }
+        if (hintParts.isNotEmpty()) {
+            Text(
+                text = hintParts.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val hasLoop = state.loopLengthFrames > 0
@@ -204,6 +257,7 @@ fun TransportScreen(viewModel: TransportViewModel) {
                     viewModel.saveLoop(name)
                 },
                 onDismiss = { showSaveDialog = false },
+                onTextFieldFocusChange = viewModel::setTextFieldFocused,
             )
         }
 
@@ -216,6 +270,7 @@ fun TransportScreen(viewModel: TransportViewModel) {
                 },
                 onRename = viewModel::renameLoop,
                 onDismiss = { showLoopPicker = false },
+                onTextFieldFocusChange = viewModel::setTextFieldFocused,
             )
         }
 
@@ -456,7 +511,9 @@ private fun AmpCard(
     onRefreshPresets: () -> Unit,
     onLoadIr: () -> Unit,
     onClearIr: () -> Unit,
+    onTextFieldFocusChange: (Boolean) -> Unit,
 ) {
+    val chainActions = listOf(KeyAction.CHAIN_1, KeyAction.CHAIN_2, KeyAction.CHAIN_3)
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -478,6 +535,7 @@ private fun AmpCard(
                     onLoad = onLoadPreset,
                     onDelete = onDeletePreset,
                     onRefresh = onRefreshPresets,
+                    onTextFieldFocusChange = onTextFieldFocusChange,
                 )
             }
             Text(
@@ -488,6 +546,8 @@ private fun AmpCard(
 
             NamSlotNames.forEachIndexed { slot, slotName ->
                 val modelName = state.namSlots.getOrNull(slot)
+                val keyHint = chainActions.getOrNull(slot)?.let(state.keyBindings::shortLabelFor)
+                val chipLabel = if (keyHint != null && keyHint != slotName) "$slotName ($keyHint)" else slotName
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -496,7 +556,7 @@ private fun AmpCard(
                     FilterChip(
                         selected = state.namActiveSlot == slot,
                         onClick = { onSelectSlot(slot) },
-                        label = { Text(slotName) },
+                        label = { Text(chipLabel) },
                     )
                     Text(
                         text = modelName?.removeSuffix(".nam") ?: "— dry —",
@@ -602,6 +662,7 @@ private fun NamPresetMenu(
     onLoad: (String) -> Unit,
     onDelete: (String) -> Unit,
     onRefresh: () -> Unit,
+    onTextFieldFocusChange: (Boolean) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -680,6 +741,7 @@ private fun NamPresetMenu(
                 onSave(name)
             },
             onDismiss = { showSaveDialog = false },
+            onTextFieldFocusChange = onTextFieldFocusChange,
         )
     }
 }
@@ -981,10 +1043,12 @@ private fun RhythmCard(
                 ) {
                     // Live drop-out — the clock keeps running underneath, so
                     // unmuting always lands back in the groove in time.
+                    val muteKey = state.keyBindings.shortLabelFor(KeyAction.DRUMS_MUTE)
+                    val muteLabel = if (muteKey != null) "Mute ($muteKey)" else "Mute"
                     FilterChip(
                         selected = state.drumsMuted,
                         onClick = onToggleDrumsMute,
-                        label = { Text("Mute") },
+                        label = { Text(muteLabel) },
                         enabled = enabled && state.drumsEnabled,
                     )
                     Switch(
@@ -1085,6 +1149,7 @@ private fun LoopPickerDialog(
     onPick: (SavedLoop) -> Unit,
     onRename: (SavedLoop, String) -> Unit,
     onDismiss: () -> Unit,
+    onTextFieldFocusChange: (Boolean) -> Unit,
 ) {
     var renameTarget by remember { mutableStateOf<SavedLoop?>(null) }
 
@@ -1143,6 +1208,7 @@ private fun LoopPickerDialog(
                 onRename(loop, name)
             },
             onDismiss = { renameTarget = null },
+            onTextFieldFocusChange = onTextFieldFocusChange,
         )
     }
 }
@@ -1154,8 +1220,13 @@ private fun LoopNameDialog(
     initialName: String,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
+    onTextFieldFocusChange: (Boolean) -> Unit,
 ) {
     var name by remember { mutableStateOf(initialName) }
+    DisposableEffect(Unit) {
+        onTextFieldFocusChange(true)
+        onDispose { onTextFieldFocusChange(false) }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -1165,6 +1236,7 @@ private fun LoopNameDialog(
                 onValueChange = { name = it },
                 singleLine = true,
                 label = { Text("Name") },
+                modifier = Modifier.onFocusChanged { onTextFieldFocusChange(it.isFocused) },
             )
         },
         confirmButton = {
@@ -1175,6 +1247,118 @@ private fun LoopNameDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun KeyBindingsDialog(
+    bindings: KeyBindings,
+    capturingFor: KeyAction?,
+    shortcutDispatcher: ShortcutDispatcher,
+    onStartCapture: (KeyAction?) -> Unit,
+    onUnbind: (KeyAction) -> Unit,
+    onResetDefaults: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(capturingFor) {
+        if (capturingFor != null) {
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Tastenbelegung") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent(shortcutDispatcher::onPreviewKeyEvent),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = if (capturingFor != null) {
+                        "Drücke jetzt eine Taste für „${capturingFor.title}“ (Esc = Abbrechen, Rücktaste = Löschen)…"
+                    } else {
+                        "Tippe auf eine Taste, um sie neu zu belegen. Leertaste startet/stoppt standardmäßig die Aufnahme."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (capturingFor != null) {
+                        OverdubOrange
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+                HorizontalDivider()
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(KeyAction.entries.toList()) { action ->
+                        val isCapturing = capturingFor == action
+                        val keyLabel = bindings.labelFor(action)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = action.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Text(
+                                    text = action.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (isCapturing) {
+                                Button(
+                                    onClick = { onStartCapture(null) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = OverdubOrange,
+                                        contentColor = Color.White,
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                ) {
+                                    Text("Taste…", style = MaterialTheme.typography.labelMedium)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { onStartCapture(action) },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                ) {
+                                    Text(keyLabel, style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                            TextButton(
+                                onClick = { onUnbind(action) },
+                                enabled = bindings.keyFor(action) != null && !isCapturing,
+                                contentPadding = PaddingValues(horizontal = 6.dp),
+                            ) { Text("✕") }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Fertig") }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onResetDefaults,
+                enabled = !bindings.isDefault,
+            ) { Text("Standard") }
         },
     )
 }

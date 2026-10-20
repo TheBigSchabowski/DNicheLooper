@@ -27,6 +27,29 @@ Guitar → NAM amp slot (A/B/C, switchable) → Cab IR (Slot D, fixed/global)
 Slot D is deliberately **not** part of the A/B/C switching: the amp changes, the
 cab stays. An empty Slot D is a bypass.
 
+## Keyboard / USB & Bluetooth Foot Switch Controls (`Tasten`)
+
+All transport, amp-slot, and rhythm actions can be triggered via a USB/Bluetooth
+keyboard or foot pedal and customized in the **Tasten** dialog (top right):
+
+- **Spacebar (`Leertaste`)** — **Stop / Record** (starts recording when empty/stopped, stops playback/recording when active)
+- **`R`** — Record / Set Loop / Re-Rec
+- **`X`** — Stop
+- **`P`** — Play / Stop
+- **`O`** — Overdub
+- **`C`** — Clear
+- **`U`** — Save loop
+- **`A` / `S` / `D`** — Amp Slot A / B / C
+- **`M`** — Drums Mute
+- **`B`** — Drums on/off
+- **`K`** — Metronome on/off
+- **`I`** — Count-in on/off
+- **`L`** — Auto-Loop on/off
+- **`V`** — Monitor input on/off
+- **`↓` / `↑`** — BPM −1 / +1
+
+Shortcuts are automatically paused while a name text field (Save loop / Rename / Save preset) is open.
+
 ## Rhythm section
 
 A metronome and a sample-based drum machine share one bar clock, so the looper,

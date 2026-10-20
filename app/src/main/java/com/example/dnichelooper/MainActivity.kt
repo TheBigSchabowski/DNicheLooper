@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,13 +15,23 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.core.content.ContextCompat
+import com.example.dnichelooper.ui.ShortcutDispatcher
 import com.example.dnichelooper.ui.TransportScreen
 import com.example.dnichelooper.ui.TransportViewModel
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: TransportViewModel by viewModels()
+    private val shortcutDispatcher by lazy { ShortcutDispatcher(viewModel) }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (shortcutDispatcher.onPreviewKeyEvent(androidx.compose.ui.input.key.KeyEvent(event))) {
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -38,8 +49,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    TransportScreen(viewModel)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onPreviewKeyEvent(shortcutDispatcher::onPreviewKeyEvent),
+                ) {
+                    TransportScreen(viewModel, shortcutDispatcher)
                 }
             }
         }

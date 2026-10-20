@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
+import androidx.compose.ui.input.key.Key
 import androidx.lifecycle.AndroidViewModel
 import java.io.File
 import androidx.lifecycle.viewModelScope
@@ -91,6 +92,9 @@ data class TransportUiState(
     val capturing: Boolean = false,
     val captureSeconds: Float = 0f,
     val captureMessage: String? = null,
+    val keyBindings: KeyBindings = KeyBindings(),
+    val capturingKeyFor: KeyAction? = null,
+    val textFieldFocused: Boolean = false,
 )
 
 class TransportViewModel(application: Application) : AndroidViewModel(application) {
@@ -100,7 +104,9 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val detector = AudioRouteDetector(audioManager)
 
-    private val _uiState = MutableStateFlow(TransportUiState())
+    private val _uiState = MutableStateFlow(
+        TransportUiState(keyBindings = KeyBindingsStore.load(application)),
+    )
     val uiState: StateFlow<TransportUiState> = _uiState.asStateFlow()
 
     private val startInProgress = AtomicBoolean(false)
@@ -365,6 +371,78 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     fun clear() {
         AudioEngine.sendCommand(LooperCommand.CLEAR)
         _uiState.update { it.copy(saveMessage = null) }
+    }
+
+    /**
+     * Combined Stop / Record trigger (default: Spacebar):
+     * - If EMPTY or STOPPED -> starts recording (or count-in).
+     * - If RECORDING, PLAYING, OVERDUBBING, or COUNT_IN -> stops playback/recording.
+     */
+    fun recordOrStop() {
+        val st = _uiState.value
+        if (!st.engineRunning) return
+        when (st.looperState) {
+            LooperState.EMPTY, LooperState.STOPPED -> record()
+            LooperState.RECORDING, LooperState.PLAYING, LooperState.OVERDUBBING, LooperState.COUNT_IN -> stopLoop()
+        }
+    }
+
+    // --- Keyboard bindings -----------------------------------------------
+
+    fun setCapturingKeyFor(action: KeyAction?) {
+        _uiState.update { it.copy(capturingKeyFor = action) }
+    }
+
+    fun setTextFieldFocused(focused: Boolean) {
+        _uiState.update { it.copy(textFieldFocused = focused) }
+    }
+
+    fun assignKey(action: KeyAction, key: Key?) {
+        val updated = _uiState.value.keyBindings.withKey(action, key)
+        _uiState.update { it.copy(keyBindings = updated, capturingKeyFor = null) }
+        val app: Context = getApplication()
+        viewModelScope.launch(Dispatchers.IO) {
+            KeyBindingsStore.save(app, updated)
+        }
+    }
+
+    fun resetKeyBindings() {
+        val defaults = KeyBindings()
+        _uiState.update { it.copy(keyBindings = defaults, capturingKeyFor = null) }
+        val app: Context = getApplication()
+        viewModelScope.launch(Dispatchers.IO) {
+            KeyBindingsStore.save(app, defaults)
+        }
+    }
+
+    fun performKeyAction(action: KeyAction) {
+        val st = _uiState.value
+        when (action) {
+            KeyAction.REC_STOP -> recordOrStop()
+            KeyAction.RECORD -> if (st.engineRunning && st.looperState != LooperState.COUNT_IN) record()
+            KeyAction.STOP -> if (st.engineRunning) stopLoop()
+            KeyAction.PLAY_STOP -> if (st.engineRunning) {
+                when (st.looperState) {
+                    LooperState.STOPPED -> if (st.loopLengthFrames > 0) play()
+                    LooperState.PLAYING, LooperState.OVERDUBBING, LooperState.RECORDING, LooperState.COUNT_IN -> stopLoop()
+                    LooperState.EMPTY -> {}
+                }
+            }
+            KeyAction.OVERDUB -> if (st.engineRunning && st.loopLengthFrames > 0) toggleOverdub()
+            KeyAction.CLEAR -> if (st.engineRunning && (st.loopLengthFrames > 0 || st.looperState == LooperState.RECORDING)) clear()
+            KeyAction.SAVE_LOOP -> saveLoop()
+            KeyAction.CHAIN_1 -> setNamActiveSlot(0)
+            KeyAction.CHAIN_2 -> setNamActiveSlot(1)
+            KeyAction.CHAIN_3 -> setNamActiveSlot(2)
+            KeyAction.DRUMS_MUTE -> if (st.engineRunning && st.drumsEnabled) toggleDrumsMute()
+            KeyAction.DRUMS_TOGGLE -> if (st.engineRunning) setDrums(!st.drumsEnabled)
+            KeyAction.METRONOME_TOGGLE -> if (st.engineRunning) setMetronome(!st.metronomeEnabled)
+            KeyAction.COUNT_IN_TOGGLE -> if (st.engineRunning) setCountIn(!st.countInEnabled)
+            KeyAction.AUTO_LOOP_TOGGLE -> if (st.engineRunning) setAutoLoop(!st.autoLoopEnabled)
+            KeyAction.MONITOR_TOGGLE -> if (st.engineRunning) setMonitor(!st.monitorEnabled)
+            KeyAction.BPM_DOWN -> if (st.engineRunning) setBpm(st.bpm - 1)
+            KeyAction.BPM_UP -> if (st.engineRunning) setBpm(st.bpm + 1)
+        }
     }
 
     /** Snapshots the loop and encodes it to Music/DNicheLooper — audio keeps running. */
